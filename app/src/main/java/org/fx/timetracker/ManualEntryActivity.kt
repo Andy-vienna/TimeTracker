@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -96,7 +97,12 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
                     IconButton(onClick = onGoBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück") // KORRIGIERT
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = Color.White,
+                    navigationIconContentColor = Color.White
+                )
             )
         }
     ) { innerPadding ->
@@ -190,13 +196,20 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
 @Composable
 fun EventTypeButton(text: String, kind: String, selectedKind: String?, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val isSelected = kind == selectedKind
-    Button(
-        onClick = onClick,
-        modifier = modifier,
-        colors = if (isSelected) ButtonDefaults.buttonColors() else ButtonDefaults.outlinedButtonColors(),
-        border = if (isSelected) null else ButtonDefaults.outlinedButtonBorder
-    ) {
-        Text(text, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+    if (isSelected) {
+        Button(
+            onClick = onClick,
+            modifier = modifier
+        ) {
+            Text(text, fontWeight = FontWeight.Bold)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = modifier
+        ) {
+            Text(text, fontWeight = FontWeight.Normal)
+        }
     }
 }
 

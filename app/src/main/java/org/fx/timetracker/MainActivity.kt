@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -48,13 +49,14 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
+import androidx.core.content.edit
 
 class MainActivity : ComponentActivity() {
 
     private val statusText = mutableStateOf("Bereit.")
     private val serverUrl = mutableStateOf("")
     private val username = mutableStateOf("")
-    private val pendingEventCount = mutableStateOf(0)
+    private val pendingEventCount = mutableIntStateOf(0)
     private val lastEventKind = mutableStateOf("")
     private val lastEventTimestamp = mutableStateOf("")
 
@@ -68,7 +70,7 @@ class MainActivity : ComponentActivity() {
     private val activityLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
+        if (result.resultCode == RESULT_OK) {
             val kind = result.data?.getStringExtra("MANUAL_EVENT_KIND")
             val timestampMillis = result.data?.getLongExtra("MANUAL_TIMESTAMP", -1L)
             if (kind != null && timestampMillis != null && timestampMillis != -1L) {
@@ -108,7 +110,9 @@ class MainActivity : ComponentActivity() {
                         TopAppBar(
                             title = { Text("TimeTracker") },
                             colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                titleContentColor = Color.White,
+                                actionIconContentColor = Color.White
                             ),
                             actions = {
                                 IconButton(onClick = {
@@ -149,7 +153,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         TimeTrackerScreen(
                             status = statusText.value,
-                            pendingEvents = pendingEventCount.value,
+                            pendingEvents = pendingEventCount.intValue,
                             version = getAppVersionName(),
                             lastEventKind = lastEventKind.value,
                             lastEventTimestamp = lastEventTimestamp.value,
@@ -173,7 +177,7 @@ class MainActivity : ComponentActivity() {
         return try {
             val packageInfo = packageManager.getPackageInfo(packageName, PackageManager.GET_META_DATA)
             packageInfo.versionName ?: "N/A"
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             "N/A"
         }
     }
@@ -181,27 +185,27 @@ class MainActivity : ComponentActivity() {
     private fun observePendingEvents() {
         lifecycleScope.launch {
             timeEventDao.getAllEvents().collect { events ->
-                pendingEventCount.value = events.size
+                pendingEventCount.intValue = events.size
             }
         }
     }
 
     private fun loadSettings() {
-        val p = prefs("fx")
+        val p = prefs()
         serverUrl.value = p.getString("server_url", "") ?: ""
         username.value = p.getString("username", "") ?: ""
         lastEventKind.value = p.getString("last_event_kind", "") ?: ""
         lastEventTimestamp.value = p.getString("last_event_timestamp", "") ?: ""
     }
 
-    private fun prefs(name: String) = getSharedPreferences(name, MODE_PRIVATE)
+    private fun prefs() = getSharedPreferences("fx", MODE_PRIVATE)
 
     private fun deviceId(): String {
-        val p = prefs("fx")
+        val p = prefs()
         var id = p.getString("deviceId", null)
         if (id == null) {
             id = "android-" + UUID.randomUUID().toString()
-            p.edit().putString("deviceId", id).apply()
+            p.edit { putString("deviceId", id) }
         }
         return id
     }
@@ -226,10 +230,10 @@ class MainActivity : ComponentActivity() {
             }
 
             if (readableText.isNotEmpty()) {
-                prefs("fx").edit()
-                    .putString("last_event_kind", kind)
-                    .putString("last_event_timestamp", timestamp)
-                    .apply()
+                prefs().edit {
+                    putString("last_event_kind", kind)
+                        .putString("last_event_timestamp", timestamp)
+                }
 
                 if (manualTimestamp == null) {
                     lastEventKind.value = kind
@@ -256,7 +260,7 @@ class MainActivity : ComponentActivity() {
                 .build()
             try {
                 client.newCall(req).execute().use {}
-            } catch (e: Exception) { /* Fehler beim Senden des Status ist nicht kritisch. */ }
+            } catch (_: Exception) { /* Fehler beim Senden des Status ist nicht kritisch. */ }
         }
     }
 
@@ -270,23 +274,25 @@ class MainActivity : ComponentActivity() {
             try {
                 client.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
-                        val responseBody = resp.body?.string()
-                        if (!responseBody.isNullOrBlank()) {
-                            val eventKind = responseBody.substringAfter("\"event\":\"").substringBefore("\"")
-                            val eventTs = responseBody.substringAfter("\"ts\":\"").substringBefore("\"")
+                        resp.body.let { responseBody ->
+                            val responseBodyString = responseBody.string()
+                            if (responseBodyString.isNotBlank()) {
+                                val eventKind = responseBodyString.substringAfter("\"event\":\"").substringBefore("\"")
+                                val eventTs = responseBodyString.substringAfter("\"ts\":\"").substringBefore("\"")
 
-                            launch(Dispatchers.Main) {
-                                lastEventKind.value = eventKind
-                                lastEventTimestamp.value = eventTs
-                                prefs("fx").edit()
-                                    .putString("last_event_kind", eventKind)
-                                    .putString("last_event_timestamp", eventTs)
-                                    .apply()
+                                launch(Dispatchers.Main) {
+                                    lastEventKind.value = eventKind
+                                    lastEventTimestamp.value = eventTs
+                                    prefs().edit {
+                                        putString("last_event_kind", eventKind)
+                                            .putString("last_event_timestamp", eventTs)
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Fehler beim Abfragen ist nicht kritisch.
             }
         }
@@ -330,7 +336,7 @@ class MainActivity : ComponentActivity() {
                                 launch(Dispatchers.Main) { statusText.value = "Sync-Fehler: Server\nantwortet mit ${resp.code}" }
                             }
                         }
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         errorOccurred = true
                         if (manualTrigger) {
                             launch(Dispatchers.Main) { statusText.value = "Keine Verbindung.\nSync fehlgeschlagen." }
@@ -437,7 +443,7 @@ fun TimeTrackerScreen(
                             val odt = OffsetDateTime.parse(lastEventTimestamp)
                             val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")
                             odt.atZoneSameInstant(ZoneId.systemDefault()).format(formatter)
-                        } catch (e: Exception) { "" }
+                        } catch (_: Exception) { "" }
                     }
 
                     Row(

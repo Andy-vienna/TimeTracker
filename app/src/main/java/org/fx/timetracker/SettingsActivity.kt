@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import org.fx.timetracker.ui.theme.TimeTrackerTheme
+import androidx.core.content.edit
 
 class SettingsActivity : ComponentActivity() {
 
@@ -137,10 +138,10 @@ fun SettingsScreen(context: Context, onSave: () -> Unit) {
         item {
             Button(
                 onClick = {
-                    prefs.edit()
-                        .putString("server_url", serverUrl.value)
-                        .putString("username", username.value)
-                        .apply()
+                    prefs.edit {
+                        putString("server_url", serverUrl.value)
+                            .putString("username", username.value)
+                    }
                     onSave()
                 },
                 modifier = Modifier
