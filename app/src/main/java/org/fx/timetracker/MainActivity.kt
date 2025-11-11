@@ -7,11 +7,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.outlined.EditCalendar
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -32,13 +34,14 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay // WICHTIGER IMPORT für die Verzögerung
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.fx.timetracker.ui.theme.TimeTrackerTheme
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -56,9 +59,26 @@ class MainActivity : ComponentActivity() {
     private val lastEventTimestamp = mutableStateOf("")
 
     private val client by lazy { OkHttpClient() }
-    private val db by lazy { AppDatabase.getDatabase(this) }
-    private val timeEventDao by lazy { db.timeEventDao() }
+
+    // Die DB-Instanzen werden jetzt sicher von der Application-Klasse bezogen
+    private val timeEventDao by lazy { (application as MainApplication).database.timeEventDao() }
+
     private val isSyncing = AtomicBoolean(false)
+
+    private val activityLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val kind = result.data?.getStringExtra("MANUAL_EVENT_KIND")
+            val timestampMillis = result.data?.getLongExtra("MANUAL_TIMESTAMP", -1L)
+            if (kind != null && timestampMillis != null && timestampMillis != -1L) {
+                val timestamp = Instant.ofEpochMilli(timestampMillis).atZone(ZoneId.systemDefault())
+                send(kind, manualTimestamp = timestamp)
+            }
+        }
+        loadSettings()
+        syncPendingEvents(manualTrigger = false)
+    }
 
     companion object {
         private const val STATUS_EVENT_KIND = "STATUS"
@@ -67,6 +87,9 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Die Initialisierung findet in MainApplication statt.
+        // Wir können die Beobachtung direkt und sicher starten.
         observePendingEvents()
         enableEdgeToEdge()
 
@@ -89,15 +112,25 @@ class MainActivity : ComponentActivity() {
                             ),
                             actions = {
                                 IconButton(onClick = {
+                                    val intent = Intent(this@MainActivity, ManualEntryActivity::class.java)
+                                    activityLauncher.launch(intent)
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.EditCalendar,
+                                        contentDescription = "Manuelle Nachstempelung"
+                                    )
+                                }
+                                IconButton(onClick = {
                                     startActivity(Intent(this@MainActivity, PendingEventsActivity::class.java))
                                 }) {
                                     Icon(
-                                        imageVector = Icons.Default.List,
+                                        imageVector = Icons.AutoMirrored.Filled.List,
                                         contentDescription = "Warteschlange ansehen"
                                     )
                                 }
                                 IconButton(onClick = {
-                                    startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+                                    val intent = Intent(this@MainActivity, SettingsActivity::class.java)
+                                    activityLauncher.launch(intent)
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Settings,
@@ -173,9 +206,14 @@ class MainActivity : ComponentActivity() {
         return id
     }
 
-    private fun send(kind: String) {
-        statusText.value = "Event gespeichert.\nWarte auf Sync..."
-        val now = ZonedDateTime.now(ZoneId.systemDefault())
+    private fun send(kind: String, manualTimestamp: ZonedDateTime? = null) {
+        statusText.value = if (manualTimestamp != null) {
+            "Manuelles Event gespeichert.\nWarte auf Sync..."
+        } else {
+            "Event gespeichert.\nWarte auf Sync..."
+        }
+
+        val now = manualTimestamp ?: ZonedDateTime.now(ZoneId.systemDefault())
         val timestamp = now.toOffsetDateTime().toString()
 
         if (kind != STATUS_EVENT_KIND) {
@@ -192,8 +230,11 @@ class MainActivity : ComponentActivity() {
                     .putString("last_event_kind", kind)
                     .putString("last_event_timestamp", timestamp)
                     .apply()
-                lastEventKind.value = kind
-                lastEventTimestamp.value = timestamp
+
+                if (manualTimestamp == null) {
+                    lastEventKind.value = kind
+                    lastEventTimestamp.value = timestamp
+                }
             }
         }
 
@@ -312,9 +353,8 @@ class MainActivity : ComponentActivity() {
             } finally {
                 isSyncing.set(false)
                 if (syncCompletedSuccessfully) {
-                    // Füge eine kleine Verzögerung hinzu, um dem Server Zeit zur Verarbeitung zu geben.
                     launch(Dispatchers.IO) {
-                        delay(1000L) // 1 Sekunde Verzögerung
+                        delay(1000L)
                         fetchLastEventFromServer()
                     }
                 }

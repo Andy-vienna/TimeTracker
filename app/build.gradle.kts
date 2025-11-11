@@ -14,7 +14,7 @@ android {
         targetSdk = 36 // targetSdk sollte zur compileSdk passen.
 
         versionCode = 1
-        versionName = "1.0.0.24"
+        versionName = "1.0.0.30"
 
         // Wichtig für Jetpack Compose
         vectorDrawables {
@@ -70,6 +70,8 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
+
+    implementation(libs.androidx.material.icons.extended)
 
     // === COMPOSE ABHÄNGIGKEITEN HINZUFÜGEN ===
 
