@@ -1,6 +1,7 @@
 package org.fx.timetracker
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
@@ -10,12 +11,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-// KORRIGIERTER IMPORT
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -69,6 +67,8 @@ class ManualEntryActivity : ComponentActivity() {
 @Composable
 fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> Unit) {
     val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("fx", Context.MODE_PRIVATE) }
+    val isUsernameSet = remember { (prefs.getString("username", "") ?: "").isNotBlank() }
 
     var selectedDate by remember { mutableStateOf(LocalDate.now()) }
     var selectedTime by remember { mutableStateOf(LocalTime.now()) }
@@ -95,7 +95,7 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
                 title = { Text("Manuelle Nachstempelung") },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück") // KORRIGIERT
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -114,11 +114,11 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth(), enabled = isUsernameSet) {
                 Text("Datum: ${selectedDate.format(dateFormatter)}")
             }
 
-            OutlinedButton(onClick = { showTimePicker = true }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { showTimePicker = true }, modifier = Modifier.fillMaxWidth(), enabled = isUsernameSet) {
                 Text("Uhrzeit: ${selectedTime.format(timeFormatter)}")
             }
 
@@ -126,12 +126,12 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
             Text("Ereignis auswählen:", style = MaterialTheme.typography.titleMedium)
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                EventTypeButton(text = "Kommt", kind = "IN", selectedKind = selectedEventKind, onClick = { selectedEventKind = "IN" }, modifier = Modifier.weight(1f))
-                EventTypeButton(text = "Geht", kind = "OUT", selectedKind = selectedEventKind, onClick = { selectedEventKind = "OUT" }, modifier = Modifier.weight(1f))
+                EventTypeButton(text = "Kommt", kind = "IN", selectedKind = selectedEventKind, onClick = { selectedEventKind = "IN" }, modifier = Modifier.weight(1f), enabled = isUsernameSet)
+                EventTypeButton(text = "Geht", kind = "OUT", selectedKind = selectedEventKind, onClick = { selectedEventKind = "OUT" }, modifier = Modifier.weight(1f), enabled = isUsernameSet)
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                EventTypeButton(text = "Pause Start", kind = "BREAK_START", selectedKind = selectedEventKind, onClick = { selectedEventKind = "BREAK_START" }, modifier = Modifier.weight(1f))
-                EventTypeButton(text = "Pause Ende", kind = "BREAK_END", selectedKind = selectedEventKind, onClick = { selectedEventKind = "BREAK_END" }, modifier = Modifier.weight(1f))
+                EventTypeButton(text = "Pause Start", kind = "BREAK_START", selectedKind = selectedEventKind, onClick = { selectedEventKind = "BREAK_START" }, modifier = Modifier.weight(1f), enabled = isUsernameSet)
+                EventTypeButton(text = "Pause Ende", kind = "BREAK_END", selectedKind = selectedEventKind, onClick = { selectedEventKind = "BREAK_END" }, modifier = Modifier.weight(1f), enabled = isUsernameSet)
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -145,6 +145,7 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
                         onSave(selectedEventKind!!, finalDateTime)
                     }
                 },
+                enabled = isUsernameSet,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp)
@@ -194,19 +195,21 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
 }
 
 @Composable
-fun EventTypeButton(text: String, kind: String, selectedKind: String?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun EventTypeButton(text: String, kind: String, selectedKind: String?, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val isSelected = kind == selectedKind
     if (isSelected) {
         Button(
             onClick = onClick,
-            modifier = modifier
+            modifier = modifier,
+            enabled = enabled
         ) {
             Text(text, fontWeight = FontWeight.Bold)
         }
     } else {
         OutlinedButton(
             onClick = onClick,
-            modifier = modifier
+            modifier = modifier,
+            enabled = enabled
         ) {
             Text(text, fontWeight = FontWeight.Normal)
         }

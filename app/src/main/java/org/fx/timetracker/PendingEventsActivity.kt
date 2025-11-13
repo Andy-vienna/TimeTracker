@@ -5,37 +5,32 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-// KORRIGIERTER IMPORT
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import org.fx.timetracker.ui.theme.TimeTrackerTheme
 
 class PendingEventsActivity : ComponentActivity() {
 
-    private val db by lazy { AppDatabase.getDatabase(this) }
+    private val timeEventDao by lazy { (application as MainApplication).database.timeEventDao() }
+    private val viewModel: PendingEventsViewModel by viewModels {
+        PendingEventsViewModelFactory(timeEventDao)
+    }
 
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +39,6 @@ class PendingEventsActivity : ComponentActivity() {
 
         setContent {
             TimeTrackerTheme {
-                // ---- Steuerung der System-UI (Statusleiste), genau wie in MainActivity ----
                 val darkIcons = !isSystemInDarkTheme()
                 DisposableEffect(darkIcons) {
                     val window = (this@PendingEventsActivity as Activity).window
@@ -52,22 +46,22 @@ class PendingEventsActivity : ComponentActivity() {
                     insetsController.isAppearanceLightStatusBars = darkIcons
                     onDispose {}
                 }
-                // ---------------------------------------------------------------------
 
-                // Wir beobachten den Flow aus der Datenbank live
-                val pendingEvents by db.timeEventDao().getAllEvents().collectAsState(initial = emptyList())
+                val pendingEvents by viewModel.pendingEvents.collectAsState()
 
                 Scaffold(
                     topBar = {
                         TopAppBar(
                             title = { Text("Wartende Events (${pendingEvents.size})") },
                             colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                titleContentColor = Color.White,
+                                navigationIconContentColor = Color.White
                             ),
                             navigationIcon = {
-                                IconButton(onClick = { finish() }) { // 'finish()' schließt die Activity
+                                IconButton(onClick = { finish() }) {
                                     Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack, // KORRIGIERT
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                         contentDescription = "Zurück"
                                     )
                                 }
@@ -81,7 +75,6 @@ class PendingEventsActivity : ComponentActivity() {
                             .padding(innerPadding)
                     ) {
                         if (pendingEvents.isEmpty()) {
-                            // Zeige eine Nachricht, wenn nichts zu senden ist
                             Box(
                                 modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
@@ -89,14 +82,9 @@ class PendingEventsActivity : ComponentActivity() {
                                 Text("Keine wartenden Events.", modifier = Modifier.padding(16.dp))
                             }
                         } else {
-                            // Zeige die Liste der Events
                             LazyColumn {
-                                items(pendingEvents) { event ->
-                                    Text(
-                                        text = event.jsonPayload,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                    )
-                                    // Die neue, korrekte Divider-Komponente aus Material 3
+                                items(pendingEvents) { parsedEvent ->
+                                    EventListItem(parsedEvent) { viewModel.deleteEvent(it) }
                                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                                 }
                             }
@@ -104,6 +92,22 @@ class PendingEventsActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun EventListItem(parsedEvent: ParsedEvent, onDelete: (TimeEvent) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(text = parsedEvent.display, modifier = Modifier.weight(1f))
+        IconButton(onClick = { onDelete(parsedEvent.originalEvent) }) {
+            Icon(imageVector = Icons.Default.Delete, contentDescription = "Löschen")
         }
     }
 }

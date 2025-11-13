@@ -157,6 +157,7 @@ class MainActivity : ComponentActivity() {
                             version = getAppVersionName(),
                             lastEventKind = lastEventKind.value,
                             lastEventTimestamp = lastEventTimestamp.value,
+                            username = username.value,
                             onSendEvent = { eventType -> send(eventType) },
                             onSync = { syncPendingEvents(manualTrigger = true) },
                             onFetchLastEvent = { fetchLastEventFromServer() }
@@ -376,10 +377,13 @@ fun TimeTrackerScreen(
     version: String,
     lastEventKind: String,
     lastEventTimestamp: String,
+    username: String,
     onSendEvent: (String) -> Unit,
     onSync: () -> Unit,
     onFetchLastEvent: () -> Unit
 ) {
+    val isUsernameSet = username.isNotBlank()
+
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -422,10 +426,10 @@ fun TimeTrackerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
-                    EventButton(text = "Kommt", onClick = { onSendEvent("IN") })
-                    EventButton(text = "Pause Start", onClick = { onSendEvent("BREAK_START") })
-                    EventButton(text = "Pause Ende", onClick = { onSendEvent("BREAK_END") })
-                    EventButton(text = "Geht", onClick = { onSendEvent("OUT") })
+                    EventButton(text = "Kommt", onClick = { onSendEvent("IN") }, enabled = isUsernameSet)
+                    EventButton(text = "Pause Start", onClick = { onSendEvent("BREAK_START") }, enabled = isUsernameSet)
+                    EventButton(text = "Pause Ende", onClick = { onSendEvent("BREAK_END") }, enabled = isUsernameSet)
+                    EventButton(text = "Geht", onClick = { onSendEvent("OUT") }, enabled = isUsernameSet)
                 }
             }
             item {
@@ -484,9 +488,10 @@ fun TimeTrackerScreen(
 }
 
 @Composable
-fun EventButton(text: String, onClick: () -> Unit) {
+fun EventButton(text: String, onClick: () -> Unit, enabled: Boolean = true) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier
             .fillMaxWidth(0.8f)
             .height(75.dp)

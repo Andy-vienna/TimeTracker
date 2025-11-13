@@ -6,7 +6,7 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "pending_events")
 data class TimeEvent(
     @PrimaryKey(autoGenerate = true)
-    val id: Int = 0,
+    val id: Long = 0L,
     val jsonPayload: String // Wir speichern einfach den kompletten JSON-String
 )
 
