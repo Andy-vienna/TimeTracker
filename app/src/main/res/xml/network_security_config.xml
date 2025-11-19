@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <domain-config>
-        <!-- Domain ist die IP deines Servers -->
-        <domain includeSubdomains="false">192.168.1.60</domain>
-        <!-- Verweise auf das Zertifikat, das du in res/raw kopiert hast -->
+    <!--
+        Dies ist die korrekte und sichere Konfiguration.
+        - HTTP (Cleartext) wird global verboten.
+        - Die App vertraut den offiziellen System-Zertifikaten SOWIE den vom Benutzer
+          manuell installierten CA-Zertifikaten. Das ist die entscheidende Regel, 
+          damit die HTTPS-Synchronisation funktioniert.
+    -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
-            <certificates src="@raw/server"/>
+            <certificates src="system" />
+            <certificates src="user" />
         </trust-anchors>
-    </domain-config>
+    </base-config>
 </network-security-config>
-
-    
