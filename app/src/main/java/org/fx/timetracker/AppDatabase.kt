@@ -22,25 +22,18 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "timetracker_database"
                 )
-                // Füge die explizite, manuelle Migration von Version 1 zu 2 hinzu.
                 .addMigrations(MIGRATION_1_2)
+                // Add this as a safety net to prevent crashes on unexpected schema changes.
+                .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance
                 instance
             }
         }
 
-        /**
-         * Definiert die manuelle Migration von der Datenbank-Version 1 auf 2.
-         * Da wir den Primärschlüssel von Int auf Long ändern, ist eine einfache
-         * ALTER TABLE Anweisung nicht möglich. Der sicherste Weg ist, die alte Tabelle
-         * zu löschen und neu zu erstellen. Die lokalen Daten gehen dabei verloren, was
-         * in diesem Fall akzeptabel ist, da die Events zum Server synchronisiert werden.
-         */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS pending_events")
-                // Erstellt die neue Tabelle. Beachte: Ein `Long` in Kotlin Room wird zu `INTEGER` in SQLite.
                 db.execSQL("CREATE TABLE IF NOT EXISTS `pending_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `jsonPayload` TEXT NOT NULL)")
             }
         }
