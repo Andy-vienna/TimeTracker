@@ -15,7 +15,7 @@ android {
         targetSdk = 36
 
         versionCode = 2
-        versionName = "1.0.0.47"
+        versionName = "1.0.1.01"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -32,9 +32,14 @@ android {
         }
     }
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
     kotlin {
         compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
         }
     }
 

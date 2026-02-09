@@ -3,6 +3,7 @@ package org.fx.timetracker
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -37,10 +38,6 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.fx.timetracker.ui.theme.TimeTrackerTheme
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -56,12 +53,12 @@ class MainActivity : ComponentActivity() {
     private val statusText = mutableStateOf("Bereit.")
     private val serverUrl = mutableStateOf("")
     private val username = mutableStateOf("")
+    private val secretKey = mutableStateOf("")
     private val pendingEventCount = mutableIntStateOf(0)
     private val lastEventKind = mutableStateOf("")
     private val lastEventTimestamp = mutableStateOf("")
 
-    // Use the central OkHttpClient instance from the Application
-    private val client: OkHttpClient by lazy { (application as MainApplication).httpClient }
+    private val networkClient by lazy { NetworkClient() }
 
     private val timeEventDao by lazy { (application as MainApplication).database.timeEventDao() }
 
@@ -80,10 +77,6 @@ class MainActivity : ComponentActivity() {
         }
         loadSettings()
         syncPendingEvents(manualTrigger = false)
-    }
-
-    companion object {
-        private const val STATUS_EVENT_KIND = "STATUS"
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -146,7 +139,7 @@ class MainActivity : ComponentActivity() {
                             username = username.value,
                             onSendEvent = { eventType -> send(eventType) },
                             onSync = { syncPendingEvents(manualTrigger = true) },
-                            onFetchLastEvent = { fetchLastEventFromServer() }
+                            onFetchLastEvent = { /* fetchLastEventFromServer() is disabled */ }
                         )
                     }
                 }
@@ -162,9 +155,13 @@ class MainActivity : ComponentActivity() {
 
     private fun getAppVersionName(): String {
         return try {
-            val packageInfo = packageManager.getPackageInfo(packageName, PackageManager.GET_META_DATA)
-            packageInfo.versionName ?: "N/A"
-        } catch (_: Exception) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0)).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0).versionName
+            } ?: "N/A"
+        } catch (e: PackageManager.NameNotFoundException) {
             "N/A"
         }
     }
@@ -181,6 +178,7 @@ class MainActivity : ComponentActivity() {
         val p = prefs()
         serverUrl.value = p.getString("server_url", "") ?: ""
         username.value = p.getString("username", "") ?: ""
+        secretKey.value = p.getString("secret_key", "") ?: ""
         lastEventKind.value = p.getString("last_event_kind", "") ?: ""
         lastEventTimestamp.value = p.getString("last_event_timestamp", "") ?: ""
     }
@@ -202,28 +200,26 @@ class MainActivity : ComponentActivity() {
         val now = manualTimestamp ?: ZonedDateTime.now(ZoneId.systemDefault())
         val timestamp = now.toOffsetDateTime().toString()
 
-        if (kind != STATUS_EVENT_KIND) {
-            val readableText = when (kind) {
-                "IN" -> "anwesend"
-                "BREAK_START" -> "in Pause"
-                "BREAK_END" -> "anwesend"
-                "OUT" -> "abwesend"
-                else -> ""
-            }
+        val readableText = when (kind) {
+            "IN" -> "anwesend"
+            "BREAK_START" -> "in Pause"
+            "BREAK_END" -> "anwesend"
+            "OUT" -> "abwesend"
+            else -> ""
+        }
 
-            if (readableText.isNotEmpty()) {
-                prefs().edit {
-                    putString("last_event_kind", kind)
-                    putString("last_event_timestamp", timestamp)
-                }
-                if (manualTimestamp == null) {
-                    lastEventKind.value = kind
-                    lastEventTimestamp.value = timestamp
-                }
+        if (readableText.isNotEmpty()) {
+            prefs().edit {
+                putString("last_event_kind", kind)
+                putString("last_event_timestamp", timestamp)
+            }
+            if (manualTimestamp == null) {
+                lastEventKind.value = kind
+                lastEventTimestamp.value = timestamp
             }
         }
 
-        val json = """{"event":"$kind","username":"${username.value}","source":"MOBILE","deviceId":"${deviceId()}","tz":"${now.zone.id}","ts":"$timestamp"}""".replace("\n", "")
+        val json = """{"event":"$kind","username":"${username.value}","source":"MOBILE","deviceId":"${deviceId()}","tz":"${now.zone.id}","ts":"$timestamp"}"""
         lifecycleScope.launch(Dispatchers.IO) {
             val event = TimeEvent(jsonPayload = json)
             timeEventDao.insert(event)
@@ -231,57 +227,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendStatusEvent() {
-        val now = ZonedDateTime.now(ZoneId.systemDefault())
-        val json = """{"event":"$STATUS_EVENT_KIND","username":"${username.value}","source":"MOBILE","deviceId":"${deviceId()}","tz":"${now.zone.id}","ts":"${now.toOffsetDateTime()}"}""".replace("\n", "")
-        lifecycleScope.launch(Dispatchers.IO) {
-            val req = Request.Builder()
-                .url("${serverUrl.value}/api/time-events")
-                .post(json.toRequestBody("application/json".toMediaType()))
-                .build()
-            try {
-                client.newCall(req).execute().use {}
-            } catch (e: Exception) {
-                Log.w("SYNC_ERROR", "Status event failed: ${e.message}")
-            }
-        }
-    }
-
-    private fun fetchLastEventFromServer() {
-        if (serverUrl.value.isBlank() || username.value.isBlank()) return
-        lifecycleScope.launch(Dispatchers.IO) {
-            val url = "${serverUrl.value}/api/last-event?username=${username.value}"
-            val req = Request.Builder().url(url).get().build()
-            try {
-                client.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        resp.body.string().let { responseBody ->
-                            if (responseBody.isNotBlank()) {
-                                val eventKind = responseBody.substringAfter("\"event\":\"").substringBefore("\"")
-                                val eventTs = responseBody.substringAfter("\"ts\":\"").substringBefore("\"")
-                                launch(Dispatchers.Main) {
-                                    lastEventKind.value = eventKind
-                                    lastEventTimestamp.value = eventTs
-                                    prefs().edit {
-                                        putString("last_event_kind", eventKind)
-                                        putString("last_event_timestamp", eventTs)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("SYNC_ERROR", "Fetch last event failed: ${e.message}")
-            }
-        }
-    }
-
     private fun syncPendingEvents(manualTrigger: Boolean = false) {
         if (!isSyncing.compareAndSet(false, true)) return
 
-        if (serverUrl.value.isBlank() || username.value.isBlank()) {
-            if (manualTrigger) statusText.value = "Fehler: URL/User fehlt!"
+        if (serverUrl.value.isBlank() || username.value.isBlank() || secretKey.value.isBlank()) {
+            if (manualTrigger) statusText.value = "Fehler: URL/User/Key fehlt!"
             isSyncing.set(false)
             return
         }
@@ -293,27 +243,25 @@ class MainActivity : ComponentActivity() {
                 if (events.isNotEmpty()) {
                     if (manualTrigger) launch(Dispatchers.Main) { statusText.value = "Synchronisiere..." }
                     for (event in events) {
-                        val req = Request.Builder()
-                            .url("${serverUrl.value}/api/time-events")
-                            .post(event.jsonPayload.toRequestBody("application/json".toMediaType()))
-                            .build()
-                        client.newCall(req).execute().use { resp ->
-                            if (resp.isSuccessful) {
-                                timeEventDao.delete(event)
-                            } else {
-                                throw Exception("Server antwortete mit ${resp.code}")
-                            }
+                        val success = networkClient.sendEvent(serverUrl.value, secretKey.value, event.jsonPayload)
+                        if (success) {
+                            timeEventDao.delete(event)
+                        } else {
+                            errorOccurred = true
+                            break
                         }
                     }
-                    sendStatusEvent()
-                    launch(Dispatchers.Main) { statusText.value = "Alle Events synchronisiert." }
+                    if (!errorOccurred) {
+                        launch(Dispatchers.Main) { statusText.value = "Alle Events synchronisiert." }
+                    }
                 }
             } catch (e: Exception) {
                 errorOccurred = true
                 Log.e("SYNC_ERROR", "Sync failed: ${e.javaClass.simpleName} - ${e.message}")
-                if (manualTrigger) launch(Dispatchers.Main) { statusText.value = "Keine Verbindung.\nSync fehlgeschlagen." }
             } finally {
-                if (!errorOccurred) fetchLastEventFromServer()
+                if (errorOccurred && manualTrigger) {
+                    launch(Dispatchers.Main) { statusText.value = "Keine Verbindung.\nSync fehlgeschlagen." }
+                }
                 isSyncing.set(false)
             }
         }
@@ -381,7 +329,7 @@ fun TimeTrackerScreen(
                             },
                             style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center
                         )
-                        IconButton(onClick = onFetchLastEvent) { Icon(imageVector = Icons.Default.Refresh, contentDescription = "Letzten Status vom Server abfragen") }
+                        IconButton(onClick = onFetchLastEvent, enabled = false) { Icon(imageVector = Icons.Default.Refresh, contentDescription = "Letzten Status vom Server abfragen") }
                     }
                 }
             }
