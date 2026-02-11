@@ -135,7 +135,7 @@ fun SettingsScreen(onSave: () -> Unit) {
         item {
             Button(
                 onClick = {
-                    prefs.edit {
+                    prefs.edit(commit = true) {
                         putString("server_url", serverUrl)
                         putString("username", username)
                         putString("secret_key", secretKey)

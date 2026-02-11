@@ -24,7 +24,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 .addMigrations(MIGRATION_1_2)
                 // Add this as a safety net to prevent crashes on unexpected schema changes.
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigration(true)
                 .build()
                 INSTANCE = instance
                 instance
@@ -33,8 +33,8 @@ abstract class AppDatabase : RoomDatabase() {
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("DROP TABLE IF EXISTS pending_events")
-                db.execSQL("CREATE TABLE IF NOT EXISTS `pending_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `jsonPayload` TEXT NOT NULL)")
+                // This migration is intentionally left empty to preserve the existing data in the `pending_events` table.
+                // The previous implementation was dropping and recreating the table, which would lead to data loss on app updates.
             }
         }
     }

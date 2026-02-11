@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+@Suppress("DEPRECATION")
 android {
     namespace = "org.fx.timetracker"
     compileSdk = 36
@@ -15,7 +16,7 @@ android {
         targetSdk = 36
 
         versionCode = 2
-        versionName = "1.0.1.01"
+        versionName = "2.0.1.1"
 
         vectorDrawables {
             useSupportLibrary = true
