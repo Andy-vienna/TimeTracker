@@ -9,7 +9,11 @@ interface TimeEventDao {
     suspend fun insert(event: TimeEvent)
 
     @Query("SELECT * FROM pending_events ORDER BY id ASC")
-    fun getAllEvents(): Flow<List<TimeEvent>> // Flow sorgt für automatische UI-Updates
+    fun getAllEvents(): Flow<List<TimeEvent>>
+
+    // Diese Funktion wird für die manuelle Synchronisation benötigt
+    @Query("SELECT * FROM pending_events ORDER BY id ASC")
+    suspend fun getAllEventsImmediate(): List<TimeEvent>
 
     @Query("SELECT * FROM pending_events ORDER BY id ASC LIMIT 1")
     suspend fun getOldestEvent(): TimeEvent?

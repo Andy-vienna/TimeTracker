@@ -24,14 +24,18 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.core.view.WindowCompat
 import org.fx.timetracker.ui.theme.TimeTrackerTheme
-import androidx.core.content.edit
 
 class SettingsActivity : ComponentActivity() {
 
@@ -39,12 +43,10 @@ class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Aktiviert den "Edge-to-Edge"-Modus
         enableEdgeToEdge()
 
         setContent {
             TimeTrackerTheme {
-                // ---- Steuerung der System-UI (Statusleiste) ----
                 val darkIcons = !isSystemInDarkTheme()
                 DisposableEffect(darkIcons) {
                     val window = (this@SettingsActivity as Activity).window
@@ -52,9 +54,7 @@ class SettingsActivity : ComponentActivity() {
                     insetsController.isAppearanceLightStatusBars = darkIcons
                     onDispose {}
                 }
-                // ---------------------------------------------
 
-                // Wir verwenden Scaffold, um eine konsistente TopAppBar zu haben
                 Scaffold(
                     topBar = {
                         TopAppBar(
@@ -68,15 +68,11 @@ class SettingsActivity : ComponentActivity() {
                     Surface(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(innerPadding), // Padding vom Scaffold anwenden
+                            .padding(innerPadding),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        // Die Logik für den Screen bleibt dieselbe
                         SettingsScreen(
-                            context = this,
-                            onSave = {
-                                finish()
-                            }
+                            onSave = { finish() }
                         )
                     }
                 }
@@ -85,12 +81,13 @@ class SettingsActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(context: Context, onSave: () -> Unit) {
-    val prefs = context.getSharedPreferences("fx", Context.MODE_PRIVATE)
-    val serverUrl = remember { mutableStateOf(prefs.getString("server_url", "") ?: "") }
-    val username = remember { mutableStateOf(prefs.getString("username", "") ?: "") }
+fun SettingsScreen(onSave: () -> Unit) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("fx", Context.MODE_PRIVATE) }
+    var serverUrl by remember { mutableStateOf(prefs.getString("server_url", "") ?: "") }
+    var username by remember { mutableStateOf(prefs.getString("username", "") ?: "") }
+    var secretKey by remember { mutableStateOf(prefs.getString("secret_key", "") ?: "") }
 
     LazyColumn(
         modifier = Modifier
@@ -98,49 +95,50 @@ fun SettingsScreen(context: Context, onSave: () -> Unit) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Der Titel "Einstellungen" ist jetzt in der TopAppBar, daher können wir ihn hier entfernen.
-        /* item {
-            Text(
-                "Einstellungen",
-                style = MaterialTheme.typography.headlineLarge,
-                modifier = Modifier.padding(bottom = 32.dp)
-            )
-        } */
-
         item {
             OutlinedTextField(
-                value = serverUrl.value,
-                onValueChange = { serverUrl.value = it },
-                label = { Text("Server URL (z.B. https://192.168.1.10:8112)") },
+                value = serverUrl,
+                onValueChange = { serverUrl = it },
+                label = { Text("Server URL") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
         }
 
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-        }
+        item { Spacer(modifier = Modifier.height(16.dp)) }
 
         item {
             OutlinedTextField(
-                value = username.value,
-                onValueChange = { username.value = it },
+                value = username,
+                onValueChange = { username = it },
                 label = { Text("Benutzername") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
         }
 
+        item { Spacer(modifier = Modifier.height(16.dp)) }
+
         item {
-            Spacer(modifier = Modifier.height(32.dp))
+            OutlinedTextField(
+                value = secretKey,
+                onValueChange = { secretKey = it },
+                label = { Text("Secret Key") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
         }
+
+        item { Spacer(modifier = Modifier.height(32.dp)) }
 
         item {
             Button(
                 onClick = {
-                    prefs.edit {
-                        putString("server_url", serverUrl.value)
-                            .putString("username", username.value)
+                    prefs.edit(commit = true) {
+                        putString("server_url", serverUrl)
+                        putString("username", username)
+                        putString("secret_key", secretKey)
                     }
                     onSave()
                 },

@@ -37,7 +37,7 @@ class PendingEventsViewModel(private val timeEventDao: TimeEventDao) : ViewModel
 
             val displayText = "$formattedTimestamp - $eventType"
             ParsedEvent(event.id, displayText, event)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             ParsedEvent(event.id, "Fehlerhaftes Event: ${event.jsonPayload}", event)
         }
     }

@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+@Suppress("DEPRECATION")
 android {
     namespace = "org.fx.timetracker"
     compileSdk = 36
@@ -14,8 +15,8 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        versionCode = 1
-        versionName = "1.0.0.35"
+        versionCode = 2
+        versionName = "2.0.1.1"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -32,9 +33,14 @@ android {
         }
     }
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
     kotlin {
         compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
         }
     }
 

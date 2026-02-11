@@ -3,7 +3,9 @@ package org.fx.timetracker
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -35,12 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.fx.timetracker.ui.theme.TimeTrackerTheme
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -56,13 +53,13 @@ class MainActivity : ComponentActivity() {
     private val statusText = mutableStateOf("Bereit.")
     private val serverUrl = mutableStateOf("")
     private val username = mutableStateOf("")
+    private val secretKey = mutableStateOf("")
     private val pendingEventCount = mutableIntStateOf(0)
     private val lastEventKind = mutableStateOf("")
     private val lastEventTimestamp = mutableStateOf("")
 
-    private val client by lazy { OkHttpClient() }
+    private val networkClient by lazy { NetworkClient() }
 
-    // Die DB-Instanzen werden jetzt sicher von der Application-Klasse bezogen
     private val timeEventDao by lazy { (application as MainApplication).database.timeEventDao() }
 
     private val isSyncing = AtomicBoolean(false)
@@ -82,16 +79,9 @@ class MainActivity : ComponentActivity() {
         syncPendingEvents(manualTrigger = false)
     }
 
-    companion object {
-        private const val STATUS_EVENT_KIND = "STATUS"
-    }
-
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Die Initialisierung findet in MainApplication statt.
-        // Wir können die Beobachtung direkt und sicher starten.
         observePendingEvents()
         enableEdgeToEdge()
 
@@ -119,36 +109,25 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, ManualEntryActivity::class.java)
                                     activityLauncher.launch(intent)
                                 }) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.EditCalendar,
-                                        contentDescription = "Manuelle Nachstempelung"
-                                    )
+                                    Icon(imageVector = Icons.Outlined.EditCalendar, contentDescription = "Manuelle Nachstempelung")
                                 }
                                 IconButton(onClick = {
                                     startActivity(Intent(this@MainActivity, PendingEventsActivity::class.java))
                                 }) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.List,
-                                        contentDescription = "Warteschlange ansehen"
-                                    )
+                                    Icon(imageVector = Icons.AutoMirrored.Filled.List, contentDescription = "Warteschlange ansehen")
                                 }
                                 IconButton(onClick = {
                                     val intent = Intent(this@MainActivity, SettingsActivity::class.java)
                                     activityLauncher.launch(intent)
                                 }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Settings,
-                                        contentDescription = "Einstellungen"
-                                    )
+                                    Icon(imageVector = Icons.Default.Settings, contentDescription = "Einstellungen")
                                 }
                             }
                         )
                     }
                 ) { innerPadding ->
                     Surface(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(innerPadding),
+                        modifier = Modifier.fillMaxSize().padding(innerPadding),
                         color = MaterialTheme.colorScheme.background
                     ) {
                         TimeTrackerScreen(
@@ -160,7 +139,7 @@ class MainActivity : ComponentActivity() {
                             username = username.value,
                             onSendEvent = { eventType -> send(eventType) },
                             onSync = { syncPendingEvents(manualTrigger = true) },
-                            onFetchLastEvent = { fetchLastEventFromServer() }
+                            onFetchLastEvent = { /* fetchLastEventFromServer() is disabled */ }
                         )
                     }
                 }
@@ -176,9 +155,13 @@ class MainActivity : ComponentActivity() {
 
     private fun getAppVersionName(): String {
         return try {
-            val packageInfo = packageManager.getPackageInfo(packageName, PackageManager.GET_META_DATA)
-            packageInfo.versionName ?: "N/A"
-        } catch (_: Exception) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0)).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0).versionName
+            } ?: "N/A"
+        } catch (e: PackageManager.NameNotFoundException) {
             "N/A"
         }
     }
@@ -195,6 +178,7 @@ class MainActivity : ComponentActivity() {
         val p = prefs()
         serverUrl.value = p.getString("server_url", "") ?: ""
         username.value = p.getString("username", "") ?: ""
+        secretKey.value = p.getString("secret_key", "") ?: ""
         lastEventKind.value = p.getString("last_event_kind", "") ?: ""
         lastEventTimestamp.value = p.getString("last_event_timestamp", "") ?: ""
     }
@@ -212,38 +196,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun send(kind: String, manualTimestamp: ZonedDateTime? = null) {
-        statusText.value = if (manualTimestamp != null) {
-            "Manuelles Event gespeichert.\nWarte auf Sync..."
-        } else {
-            "Event gespeichert.\nWarte auf Sync..."
-        }
-
+        statusText.value = if (manualTimestamp != null) "Manuelles Event..." else "Event..."
         val now = manualTimestamp ?: ZonedDateTime.now(ZoneId.systemDefault())
         val timestamp = now.toOffsetDateTime().toString()
 
-        if (kind != STATUS_EVENT_KIND) {
-            val readableText = when (kind) {
-                "IN" -> "anwesend"
-                "BREAK_START" -> "in Pause"
-                "BREAK_END" -> "anwesend"
-                "OUT" -> "abwesend"
-                else -> ""
+        val readableText = when (kind) {
+            "IN" -> "anwesend"
+            "BREAK_START" -> "in Pause"
+            "BREAK_END" -> "anwesend"
+            "OUT" -> "abwesend"
+            else -> ""
+        }
+
+        if (readableText.isNotEmpty()) {
+            prefs().edit {
+                putString("last_event_kind", kind)
+                putString("last_event_timestamp", timestamp)
             }
-
-            if (readableText.isNotEmpty()) {
-                prefs().edit {
-                    putString("last_event_kind", kind)
-                        .putString("last_event_timestamp", timestamp)
-                }
-
-                if (manualTimestamp == null) {
-                    lastEventKind.value = kind
-                    lastEventTimestamp.value = timestamp
-                }
+            if (manualTimestamp == null) {
+                lastEventKind.value = kind
+                lastEventTimestamp.value = timestamp
             }
         }
 
-        val json = """{"event":"$kind","username":"${username.value}","source":"MOBILE","deviceId":"${deviceId()}","tz":"${now.zone.id}","ts":"$timestamp"}""".replace("\n", "")
+        val json = """{"event":"$kind","username":"${username.value}","source":"MOBILE","deviceId":"${deviceId()}","tz":"${now.zone.id}","ts":"$timestamp"}"""
         lifecycleScope.launch(Dispatchers.IO) {
             val event = TimeEvent(jsonPayload = json)
             timeEventDao.insert(event)
@@ -251,120 +227,42 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendStatusEvent() {
-        val now = ZonedDateTime.now(ZoneId.systemDefault())
-        val json = """{"event":"$STATUS_EVENT_KIND","username":"${username.value}","source":"MOBILE","deviceId":"${deviceId()}","tz":"${now.zone.id}","ts":"${now.toOffsetDateTime()}"}""".replace("\n", "")
-        lifecycleScope.launch(Dispatchers.IO) {
-            val req = Request.Builder()
-                .url("${serverUrl.value}/api/time-events")
-                .post(json.toRequestBody("application/json".toMediaType()))
-                .build()
-            try {
-                client.newCall(req).execute().use {}
-            } catch (_: Exception) { /* Fehler beim Senden des Status ist nicht kritisch. */ }
-        }
-    }
-
-    private fun fetchLastEventFromServer() {
-        if (serverUrl.value.isBlank() || username.value.isBlank()) return
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            val url = "${serverUrl.value}/api/last-event?username=${username.value}"
-            val req = Request.Builder().url(url).get().build()
-
-            try {
-                client.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        resp.body.let { responseBody ->
-                            val responseBodyString = responseBody.string()
-                            if (responseBodyString.isNotBlank()) {
-                                val eventKind = responseBodyString.substringAfter("\"event\":\"").substringBefore("\"")
-                                val eventTs = responseBodyString.substringAfter("\"ts\":\"").substringBefore("\"")
-
-                                launch(Dispatchers.Main) {
-                                    lastEventKind.value = eventKind
-                                    lastEventTimestamp.value = eventTs
-                                    prefs().edit {
-                                        putString("last_event_kind", eventKind)
-                                            .putString("last_event_timestamp", eventTs)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-                // Fehler beim Abfragen ist nicht kritisch.
-            }
-        }
-    }
-
     private fun syncPendingEvents(manualTrigger: Boolean = false) {
-        if (!isSyncing.compareAndSet(false, true)) {
-            return
-        }
+        if (!isSyncing.compareAndSet(false, true)) return
 
-        if (serverUrl.value.isBlank() || username.value.isBlank()) {
-            if (manualTrigger) {
-                statusText.value = "Fehler: Bitte IP und User in den Einstellungen festlegen!"
-            }
+        if (serverUrl.value.isBlank() || username.value.isBlank() || secretKey.value.isBlank()) {
+            if (manualTrigger) statusText.value = "Fehler: URL/User/Key fehlt!"
             isSyncing.set(false)
             return
         }
 
         lifecycleScope.launch(Dispatchers.IO) {
-            var syncCompletedSuccessfully = false
+            var errorOccurred = false
             try {
-                var sentAtLeastOneEvent = false
-                var errorOccurred = false
-
-                while (true) {
-                    val eventToSync = timeEventDao.getOldestEvent() ?: break
-                    if (manualTrigger && !sentAtLeastOneEvent) {
-                        launch(Dispatchers.Main) { statusText.value = "Synchronisiere..." }
-                    }
-                    val req = Request.Builder()
-                        .url("${serverUrl.value}/api/time-events")
-                        .post(eventToSync.jsonPayload.toRequestBody("application/json".toMediaType()))
-                        .build()
-                    try {
-                        client.newCall(req).execute().use { resp ->
-                            if (resp.isSuccessful) {
-                                timeEventDao.delete(eventToSync)
-                                sentAtLeastOneEvent = true
-                            } else {
-                                errorOccurred = true
-                                launch(Dispatchers.Main) { statusText.value = "Sync-Fehler: Server\nantwortet mit ${resp.code}" }
-                            }
-                        }
-                    } catch (_: Exception) {
-                        errorOccurred = true
-                        if (manualTrigger) {
-                            launch(Dispatchers.Main) { statusText.value = "Keine Verbindung.\nSync fehlgeschlagen." }
+                val events = timeEventDao.getAllEventsImmediate()
+                if (events.isNotEmpty()) {
+                    if (manualTrigger) launch(Dispatchers.Main) { statusText.value = "Synchronisiere..." }
+                    for (event in events) {
+                        val success = networkClient.sendEvent(serverUrl.value, secretKey.value, event.jsonPayload)
+                        if (success) {
+                            timeEventDao.delete(event)
+                        } else {
+                            errorOccurred = true
+                            break
                         }
                     }
-                    if (errorOccurred) {
-                        break
+                    if (!errorOccurred) {
+                        launch(Dispatchers.Main) { statusText.value = "Alle Events synchronisiert." }
                     }
                 }
-
-                if (sentAtLeastOneEvent) {
-                    sendStatusEvent()
-                    launch(Dispatchers.Main) {
-                        statusText.value = "Alle Events synchronisiert."
-                    }
-                }
-                if (!errorOccurred) {
-                    syncCompletedSuccessfully = true
-                }
+            } catch (e: Exception) {
+                errorOccurred = true
+                Log.e("SYNC_ERROR", "Sync failed: ${e.javaClass.simpleName} - ${e.message}")
             } finally {
-                isSyncing.set(false)
-                if (syncCompletedSuccessfully) {
-                    launch(Dispatchers.IO) {
-                        delay(1000L)
-                        fetchLastEventFromServer()
-                    }
+                if (errorOccurred && manualTrigger) {
+                    launch(Dispatchers.Main) { statusText.value = "Keine Verbindung.\nSync fehlgeschlagen." }
                 }
+                isSyncing.set(false)
             }
         }
     }
@@ -389,47 +287,23 @@ fun TimeTrackerScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            item { Text(status, fontSize = 22.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)) }
             item {
-                Text(
-                    text = status,
-                    fontSize = 22.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 24.dp)
-                )
-            }
-            item {
-                OutlinedButton(
-                    onClick = onSync,
-                    modifier = Modifier.padding(bottom = 35.dp),
-                    enabled = pendingEvents > 0
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Synchronisieren",
-                        modifier = Modifier.size(ButtonDefaults.IconSize)
-                    )
+                OutlinedButton(onClick = onSync, modifier = Modifier.padding(bottom = 35.dp), enabled = pendingEvents > 0) {
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Synchronisieren", modifier = Modifier.size(ButtonDefaults.IconSize))
                     Spacer(Modifier.size(ButtonDefaults.IconSpacing))
                     Text(if (pendingEvents > 0) "Synchronisieren ($pendingEvents)" else "Alles aktuell")
                 }
             }
             item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(24.dp)
-                ) {
-                    EventButton(text = "Kommt", onClick = { onSendEvent("IN") }, enabled = isUsernameSet)
-                    EventButton(text = "Pause Start", onClick = { onSendEvent("BREAK_START") }, enabled = isUsernameSet)
-                    EventButton(text = "Pause Ende", onClick = { onSendEvent("BREAK_END") }, enabled = isUsernameSet)
-                    EventButton(text = "Geht", onClick = { onSendEvent("OUT") }, enabled = isUsernameSet)
+                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    EventButton("Kommt", { onSendEvent("IN") }, enabled = isUsernameSet)
+                    EventButton("Pause Start", { onSendEvent("BREAK_START") }, enabled = isUsernameSet)
+                    EventButton("Pause Ende", { onSendEvent("BREAK_END") }, enabled = isUsernameSet)
+                    EventButton("Geht", { onSendEvent("OUT") }, enabled = isUsernameSet)
                 }
             }
             item {
@@ -444,58 +318,29 @@ fun TimeTrackerScreen(
                     }
                     val formattedTimestamp = remember(lastEventTimestamp) {
                         try {
-                            val odt = OffsetDateTime.parse(lastEventTimestamp)
-                            val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")
-                            odt.atZoneSameInstant(ZoneId.systemDefault()).format(formatter)
+                            OffsetDateTime.parse(lastEventTimestamp).atZoneSameInstant(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"))
                         } catch (_: Exception) { "" }
                     }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = buildAnnotatedString {
-                                withStyle(style = SpanStyle(fontWeight = FontWeight.Bold, color = displayColor)) {
-                                    append(displayText)
-                                }
-                                if (formattedTimestamp.isNotEmpty()) {
-                                    append("\n($formattedTimestamp)")
-                                }
+                            buildAnnotatedString {
+                                withStyle(style = SpanStyle(fontWeight = FontWeight.Bold, color = displayColor)) { append(displayText) }
+                                if (formattedTimestamp.isNotEmpty()) append("\n($formattedTimestamp)")
                             },
-                            style = MaterialTheme.typography.bodyLarge,
-                            textAlign = TextAlign.Center
+                            style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center
                         )
-                        IconButton(onClick = onFetchLastEvent) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Letzten Status vom Server abfragen"
-                            )
-                        }
+                        IconButton(onClick = onFetchLastEvent, enabled = false) { Icon(imageVector = Icons.Default.Refresh, contentDescription = "Letzten Status vom Server abfragen") }
                     }
                 }
             }
         }
-
-        Text(
-            text = "Version: $version",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(16.dp)
-        )
+        Text("Version: $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
     }
 }
 
 @Composable
 fun EventButton(text: String, onClick: () -> Unit, enabled: Boolean = true) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier
-            .fillMaxWidth(0.8f)
-            .height(75.dp)
-    ) {
+    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(0.8f).height(75.dp)) {
         Text(text, fontSize = 22.sp)
     }
 }
