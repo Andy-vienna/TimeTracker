@@ -1,6 +1,7 @@
 package org.fx.timetracker
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -15,23 +16,18 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.outlined.EditCalendar
+import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.EditCalendar
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -40,10 +36,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.fx.timetracker.ui.theme.TimeTrackerTheme
 import java.time.Instant
-import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 import androidx.core.content.edit
@@ -105,6 +99,11 @@ class MainActivity : ComponentActivity() {
                                 actionIconContentColor = Color.White
                             ),
                             actions = {
+                                IconButton(onClick = {
+                                    startActivity(Intent(this@MainActivity, OnlinePreviewActivity::class.java))
+                                }) {
+                                    Icon(imageVector = Icons.Default.CloudQueue, contentDescription = "Online Vorschau")
+                                }
                                 IconButton(onClick = {
                                     val intent = Intent(this@MainActivity, ManualEntryActivity::class.java)
                                     activityLauncher.launch(intent)
@@ -242,8 +241,13 @@ class MainActivity : ComponentActivity() {
                 val events = timeEventDao.getAllEventsImmediate()
                 if (events.isNotEmpty()) {
                     if (manualTrigger) launch(Dispatchers.Main) { statusText.value = "Synchronisiere..." }
+                    
+                    // Basis-URL vorbereiten (Sicherstellen, dass sie mit / endet)
+                    val baseUrl = if (serverUrl.value.endsWith("/")) serverUrl.value else "${serverUrl.value}/"
+                    val fullUrl = if (baseUrl.contains(".php")) baseUrl else "${baseUrl}timeevent.php"
+
                     for (event in events) {
-                        val success = networkClient.sendEvent(serverUrl.value, secretKey.value, event.jsonPayload)
+                        val success = networkClient.sendEvent(fullUrl, secretKey.value, event.jsonPayload)
                         if (success) {
                             timeEventDao.delete(event)
                         } else {
@@ -309,38 +313,31 @@ fun TimeTrackerScreen(
             item {
                 Spacer(modifier = Modifier.height(48.dp))
                 if (lastEventKind.isNotEmpty()) {
-                    val (displayText, displayColor) = when (lastEventKind) {
-                        "IN" -> "anwesend" to Color(0xFF4CAF50)
-                        "BREAK_START" -> "in Pause" to Color(0xFFFFC107)
-                        "BREAK_END" -> "anwesend" to Color(0xFF4CAF50)
-                        "OUT" -> "abwesend" to Color(0xFFF44336)
-                        else -> "Unbekannt" to MaterialTheme.colorScheme.onSurfaceVariant
+                    val readableText = when (lastEventKind) {
+                        "IN" -> "KOMMT"
+                        "BREAK_START" -> "PAUSE START"
+                        "BREAK_END" -> "PAUSE ENDE"
+                        "OUT" -> "GEHT"
+                        else -> lastEventKind
                     }
-                    val formattedTimestamp = remember(lastEventTimestamp) {
-                        try {
-                            OffsetDateTime.parse(lastEventTimestamp).atZoneSameInstant(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss"))
-                        } catch (_: Exception) { "" }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            buildAnnotatedString {
-                                withStyle(style = SpanStyle(fontWeight = FontWeight.Bold, color = displayColor)) { append(displayText) }
-                                if (formattedTimestamp.isNotEmpty()) append("\n($formattedTimestamp)")
-                            },
-                            style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center
-                        )
-                        IconButton(onClick = onFetchLastEvent, enabled = false) { Icon(imageVector = Icons.Default.Refresh, contentDescription = "Letzten Status vom Server abfragen") }
-                    }
+                    Text("Letzte Stempelung (lokal):", fontSize = 14.sp, color = Color.Gray)
+                    Text(readableText, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text(lastEventTimestamp.replace("T", " ").substringBefore("."), fontSize = 16.sp)
                 }
             }
         }
-        Text("Version: $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
+        Text("v$version", modifier = Modifier.padding(8.dp), fontSize = 12.sp, color = Color.LightGray)
     }
 }
 
 @Composable
-fun EventButton(text: String, onClick: () -> Unit, enabled: Boolean = true) {
-    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(0.8f).height(75.dp)) {
-        Text(text, fontSize = 22.sp)
+fun EventButton(label: String, onClick: () -> Unit, enabled: Boolean) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth(0.7f).height(60.dp),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Text(label, fontSize = 18.sp)
     }
 }

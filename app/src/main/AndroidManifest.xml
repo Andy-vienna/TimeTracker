@@ -38,6 +38,11 @@
             android:name=".ManualEntryActivity"
             android:exported="false"
             android:theme="@style/Theme.TimeTracker" />
+        <activity
+            android:name=".OnlinePreviewActivity"
+            android:exported="false"
+            android:label="Online Vorschau"
+            android:theme="@style/Theme.TimeTracker" />
     </application>
 
 </manifest>
