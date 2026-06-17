@@ -99,9 +99,10 @@ fun SettingsScreen(onSave: () -> Unit) {
             OutlinedTextField(
                 value = serverUrl,
                 onValueChange = { serverUrl = it },
-                label = { Text("Server URL") },
+                label = { Text("Server Basis-URL (z.B. https://www.aw-net.eu/fXtime)") },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                placeholder = { Text("https://...") }
             )
         }
 
