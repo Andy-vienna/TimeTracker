@@ -2,6 +2,7 @@ package org.fx.timetracker
 
 import android.app.Activity
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -84,7 +85,10 @@ class PendingEventsActivity : ComponentActivity() {
                         } else {
                             LazyColumn {
                                 items(pendingEvents) { parsedEvent ->
-                                    EventListItem(parsedEvent) { viewModel.deleteEvent(it) }
+                                    EventListItem(parsedEvent) {
+                                        viewModel.deleteEvent(it)
+                                        Toast.makeText(this@PendingEventsActivity, "Event lokal gelöscht", Toast.LENGTH_SHORT).show()
+                                    }
                                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                                 }
                             }
@@ -107,7 +111,11 @@ fun EventListItem(parsedEvent: ParsedEvent, onDelete: (TimeEvent) -> Unit) {
     ) {
         Text(text = parsedEvent.display, modifier = Modifier.weight(1f))
         IconButton(onClick = { onDelete(parsedEvent.originalEvent) }) {
-            Icon(imageVector = Icons.Default.Delete, contentDescription = "Löschen")
+            Icon(
+                imageVector = Icons.Default.Delete,
+                contentDescription = "Löschen",
+                tint = MaterialTheme.colorScheme.error
+            )
         }
     }
 }

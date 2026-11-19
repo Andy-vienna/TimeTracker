@@ -7,5 +7,6 @@ data class OnlineEvent(
     val source: String,
     val deviceId: String,
     val tz: String,
-    val ts: String
+    val ts: String,
+    val country: String? = null
 )

@@ -15,8 +15,8 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        versionCode = 4
-        versionName = "3.0.1.14"
+        versionCode = 8
+        versionName = "3.0.1.52"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -57,7 +57,6 @@ android {
         includeInBundle = true
         includeInApk = true
     }
-    buildToolsVersion = "36.1.0"
 }
 
 dependencies {
@@ -84,6 +83,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     // Tests
+    testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

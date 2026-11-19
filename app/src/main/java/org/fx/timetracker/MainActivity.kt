@@ -41,6 +41,7 @@ import java.time.ZonedDateTime
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 import androidx.core.content.edit
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
 
@@ -51,6 +52,10 @@ class MainActivity : ComponentActivity() {
     private val pendingEventCount = mutableIntStateOf(0)
     private val lastEventKind = mutableStateOf("")
     private val lastEventTimestamp = mutableStateOf("")
+    private val travelCountry = mutableStateOf(DEFAULT_REISELAND)
+    private val travelSince = mutableStateOf("")
+    private val kunden = mutableStateOf<List<Kunde>>(emptyList())
+    private val lastCustomer = mutableStateOf<String?>(null)
 
     private val networkClient by lazy { NetworkClient() }
 
@@ -64,9 +69,11 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode == RESULT_OK) {
             val kind = result.data?.getStringExtra("MANUAL_EVENT_KIND")
             val timestampMillis = result.data?.getLongExtra("MANUAL_TIMESTAMP", -1L)
+            val country = result.data?.getStringExtra("MANUAL_COUNTRY")
+            val customer = result.data?.getStringExtra("MANUAL_CUSTOMER")
             if (kind != null && timestampMillis != null && timestampMillis != -1L) {
                 val timestamp = Instant.ofEpochMilli(timestampMillis).atZone(ZoneId.systemDefault())
-                send(kind, manualTimestamp = timestamp)
+                send(kind, manualTimestamp = timestamp, country = country, customer = customer)
             }
         }
         loadSettings()
@@ -136,7 +143,12 @@ class MainActivity : ComponentActivity() {
                             lastEventKind = lastEventKind.value,
                             lastEventTimestamp = lastEventTimestamp.value,
                             username = username.value,
-                            onSendEvent = { eventType -> send(eventType) },
+                            travelCountry = travelCountry.value,
+                            travelSince = travelSince.value,
+                            kunden = kunden.value,
+                            lastCustomer = lastCustomer.value,
+                            onSendEvent = { eventType, country -> send(eventType, country = country) },
+                            onKommt = { customer -> send(EventKind.IN, customer = customer) },
                             onSync = { syncPendingEvents(manualTrigger = true) },
                             onFetchLastEvent = { /* fetchLastEventFromServer() is disabled */ }
                         )
@@ -150,6 +162,32 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         loadSettings()
         syncPendingEvents(manualTrigger = false)
+        refreshKunden()
+    }
+
+    /** Holt die Kundenliste aus der Online-DB; ohne Verbindung bleibt die gespeicherte Liste. */
+    private fun refreshKunden() {
+        if (serverUrl.value.isBlank() || secretKey.value.isBlank()) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            val antwort = networkClient.fetch(phpUrl("getkunden.php"), secretKey.value) ?: return@launch
+            try {
+                KundenSpeicher.speichere(prefs(), antwort)
+                val liste = KundenSpeicher.liste(prefs())
+                launch(Dispatchers.Main) { kunden.value = liste }
+            } catch (e: Exception) {
+                Log.e("KUNDEN", "Kundenliste unlesbar: ${e.message}")
+            }
+        }
+    }
+
+    /** URL eines PHP-Skripts neben der eingestellten Server-URL. */
+    private fun phpUrl(script: String): String {
+        val url = serverUrl.value
+        return when {
+            url.contains(".php") -> url.substringBeforeLast("/") + "/" + script
+            url.endsWith("/") -> url + script
+            else -> "$url/$script"
+        }
     }
 
     private fun getAppVersionName(): String {
@@ -180,6 +218,10 @@ class MainActivity : ComponentActivity() {
         secretKey.value = p.getString("secret_key", "") ?: ""
         lastEventKind.value = p.getString("last_event_kind", "") ?: ""
         lastEventTimestamp.value = p.getString("last_event_timestamp", "") ?: ""
+        travelCountry.value = p.getString("travel_country", DEFAULT_REISELAND) ?: DEFAULT_REISELAND
+        travelSince.value = p.getString("travel_since", "") ?: ""
+        kunden.value = KundenSpeicher.liste(p)
+        lastCustomer.value = KundenSpeicher.letzter(p)
     }
 
     private fun prefs() = getSharedPreferences("fx", MODE_PRIVATE)
@@ -194,7 +236,7 @@ class MainActivity : ComponentActivity() {
         return id
     }
 
-    private fun send(kind: String, manualTimestamp: ZonedDateTime? = null) {
+    private fun send(kind: String, manualTimestamp: ZonedDateTime? = null, country: String? = null, customer: String? = null) {
         statusText.value = if (manualTimestamp != null) "Manuelles Event..." else "Event..."
         val now = manualTimestamp ?: ZonedDateTime.now(ZoneId.systemDefault())
         val timestamp = now.toOffsetDateTime().toString()
@@ -204,6 +246,8 @@ class MainActivity : ComponentActivity() {
             "BREAK_START" -> "in Pause"
             "BREAK_END" -> "anwesend"
             "OUT" -> "abwesend"
+            EventKind.TRAVEL_START -> "auf Reise"
+            EventKind.TRAVEL_END -> "Reise beendet"
             else -> ""
         }
 
@@ -218,11 +262,44 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        val json = """{"event":"$kind","username":"${username.value}","source":"MOBILE","deviceId":"${deviceId()}","tz":"${now.zone.id}","ts":"$timestamp"}"""
+        if (kind == EventKind.TRAVEL_START && country != null) {
+            prefs().edit { putString("travel_country", country) }
+            travelCountry.value = country
+        }
+        if (manualTimestamp == null) updateTravelState(kind, timestamp)
+        if (kind == EventKind.IN) {
+            KundenSpeicher.merke(prefs(), customer)
+            lastCustomer.value = customer
+        }
+
+        val json = JSONObject().apply {
+            put("event", kind)
+            put("username", username.value)
+            put("source", "MOBILE")
+            put("deviceId", deviceId())
+            put("tz", now.zone.id)
+            put("ts", timestamp)
+            if (kind == EventKind.TRAVEL_START) put("country", country ?: DEFAULT_REISELAND)
+            if (kind == EventKind.IN && customer != null) put("customer", customer)
+        }.toString()
         lifecycleScope.launch(Dispatchers.IO) {
             val event = TimeEvent(jsonPayload = json)
             timeEventDao.insert(event)
             syncPendingEvents(manualTrigger = false)
+        }
+    }
+
+    /** Merkt sich eine laufende Reise (nur Live-Stempel), damit sie am Startbildschirm sichtbar ist. */
+    private fun updateTravelState(kind: String, timestamp: String) {
+        when (kind) {
+            EventKind.TRAVEL_START -> {
+                prefs().edit { putString("travel_since", timestamp) }
+                travelSince.value = timestamp
+            }
+            EventKind.TRAVEL_END -> {
+                prefs().edit { remove("travel_since") }
+                travelSince.value = ""
+            }
         }
     }
 
@@ -280,11 +357,43 @@ fun TimeTrackerScreen(
     lastEventKind: String,
     lastEventTimestamp: String,
     username: String,
-    onSendEvent: (String) -> Unit,
+    travelCountry: String,
+    travelSince: String,
+    kunden: List<Kunde>,
+    lastCustomer: String?,
+    onSendEvent: (String, String?) -> Unit,
+    onKommt: (String?) -> Unit,
     onSync: () -> Unit,
     onFetchLastEvent: () -> Unit
 ) {
     val isUsernameSet = username.isNotBlank()
+    var showReiselandDialog by remember { mutableStateOf(false) }
+    var showKundeDialog by remember { mutableStateOf(false) }
+
+    if (showKundeDialog) {
+        KundeDialog(
+            kunden = kunden,
+            initialId = lastCustomer,
+            title = "Kommt – Kunde",
+            onConfirm = { id ->
+                showKundeDialog = false
+                onKommt(id)
+            },
+            onDismiss = { showKundeDialog = false }
+        )
+    }
+
+    if (showReiselandDialog) {
+        ReiselandDialog(
+            initialCode = travelCountry,
+            title = "Reise Start – Land",
+            onConfirm = { code ->
+                showReiselandDialog = false
+                onSendEvent(EventKind.TRAVEL_START, code)
+            },
+            onDismiss = { showReiselandDialog = false }
+        )
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -304,22 +413,33 @@ fun TimeTrackerScreen(
             }
             item {
                 Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                    EventButton("Kommt", { onSendEvent("IN") }, enabled = isUsernameSet)
-                    EventButton("Pause Start", { onSendEvent("BREAK_START") }, enabled = isUsernameSet)
-                    EventButton("Pause Ende", { onSendEvent("BREAK_END") }, enabled = isUsernameSet)
-                    EventButton("Geht", { onSendEvent("OUT") }, enabled = isUsernameSet)
+                    EventButton("Kommt", { if (kunden.isEmpty()) onKommt(null) else showKundeDialog = true }, enabled = isUsernameSet)
+                    EventButton("Pause Start", { onSendEvent(EventKind.BREAK_START, null) }, enabled = isUsernameSet)
+                    EventButton("Pause Ende", { onSendEvent(EventKind.BREAK_END, null) }, enabled = isUsernameSet)
+                    EventButton("Geht", { onSendEvent(EventKind.OUT, null) }, enabled = isUsernameSet)
+                }
+            }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    if (travelSince.isNotEmpty()) {
+                        Text(
+                            "Auf Reise (${travelCountry}) seit ${travelSince.replace("T", " ").substringBefore(".").take(16)}",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    TravelButton("Reise Start", { showReiselandDialog = true }, enabled = isUsernameSet)
+                    TravelButton("Reise Ende", { onSendEvent(EventKind.TRAVEL_END, null) }, enabled = isUsernameSet)
                 }
             }
             item {
                 Spacer(modifier = Modifier.height(48.dp))
                 if (lastEventKind.isNotEmpty()) {
-                    val readableText = when (lastEventKind) {
-                        "IN" -> "KOMMT"
-                        "BREAK_START" -> "PAUSE START"
-                        "BREAK_END" -> "PAUSE ENDE"
-                        "OUT" -> "GEHT"
-                        else -> lastEventKind
-                    }
+                    val readableText = EventKind.label(lastEventKind)
                     Text("Letzte Stempelung (lokal):", fontSize = 14.sp, color = Color.Gray)
                     Text(readableText, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     Text(lastEventTimestamp.replace("T", " ").substringBefore("."), fontSize = 16.sp)
@@ -336,6 +456,19 @@ fun EventButton(label: String, onClick: () -> Unit, enabled: Boolean) {
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier.fillMaxWidth(0.7f).height(60.dp),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Text(label, fontSize = 18.sp)
+    }
+}
+
+/** Reise-Buttons optisch von Kommen/Gehen abgesetzt (Reisezeit ist keine Arbeitszeit). */
+@Composable
+fun TravelButton(label: String, onClick: () -> Unit, enabled: Boolean) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth(0.7f).height(52.dp),
         shape = MaterialTheme.shapes.medium
     ) {
         Text(label, fontSize = 18.sp)

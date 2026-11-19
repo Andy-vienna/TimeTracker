@@ -3,6 +3,7 @@ package org.fx.timetracker
 import android.app.Activity
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -12,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -94,7 +96,9 @@ class OnlinePreviewActivity : ComponentActivity() {
                             } else {
                                 LazyColumn(modifier = Modifier.fillMaxSize().padding(8.dp)) {
                                     items(events) { event ->
-                                        OnlineEventItem(event)
+                                        OnlineEventItem(event) { id ->
+                                            deleteEventFromServer(id)
+                                        }
                                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp, color = Color.LightGray)
                                     }
                                 }
@@ -107,22 +111,70 @@ class OnlinePreviewActivity : ComponentActivity() {
     }
 
     @Composable
-    fun OnlineEventItem(event: OnlineEvent) {
-        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                val displayText = when (event.event) {
-                    "IN" -> "KOMMT"
-                    "BREAK_START" -> "PAUSE START"
-                    "BREAK_END" -> "PAUSE ENDE"
-                    "OUT" -> "GEHT"
-                    else -> event.event
+    fun OnlineEventItem(event: OnlineEvent, onDelete: (String) -> Unit) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    val displayText = EventKind.label(event.event) +
+                        (event.country?.let { " ($it)" } ?: "")
+                    Text(text = displayText, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(text = event.ts.split("T").getOrElse(1) { "" }.take(8), fontSize = 12.sp, color = Color.Gray)
                 }
-                Text(text = displayText, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                Text(text = event.ts.split("T").getOrElse(1) { "" }.take(8), fontSize = 12.sp, color = Color.Gray)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "Datum: ${event.ts.split("T").firstOrNull() ?: ""}", fontSize = 14.sp)
+                Text(text = "Quelle: ${event.source} (${event.deviceId.take(8)}...)", fontSize = 12.sp, color = Color.Gray)
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(text = "Datum: ${event.ts.split("T").firstOrNull() ?: ""}", fontSize = 14.sp)
-            Text(text = "Quelle: ${event.source} (${event.deviceId.take(8)}...)", fontSize = 12.sp, color = Color.Gray)
+            IconButton(onClick = { onDelete(event.id) }) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Löschen",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+
+    private fun deleteEventFromServer(id: String) {
+        val prefs = getSharedPreferences("fx", MODE_PRIVATE)
+        val baseUrl = prefs.getString("server_url", "") ?: ""
+        val key = prefs.getString("secret_key", "") ?: ""
+
+        if (baseUrl.isBlank() || key.isBlank()) return
+
+        // URL für 'deleteevents.php' vorbereiten
+        val baseUrlClean = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+        val deleteUrl = if (baseUrlClean.contains(".php")) {
+            baseUrlClean.substringBeforeLast("/") + "/deleteevents.php"
+        } else {
+            baseUrlClean + "deleteevents.php"
+        }
+
+        // Payload vorbereiten: {"ids": [id]}
+        val jsonPayload = JSONObject().apply {
+            put("ids", org.json.JSONArray().put(id.toIntOrNull() ?: 0))
+        }.toString()
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // Wir nutzen sendEvent für den POST Request
+                val success = networkClient.sendEvent(deleteUrl, key, jsonPayload)
+                
+                withContext(Dispatchers.Main) {
+                    if (success) {
+                        Toast.makeText(this@OnlinePreviewActivity, "Eintrag gelöscht", Toast.LENGTH_SHORT).show()
+                        loadOnlineData()
+                    } else {
+                        Toast.makeText(this@OnlinePreviewActivity, "Fehler beim Löschen (Server)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@OnlinePreviewActivity, "Fehler: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -168,7 +220,8 @@ class OnlinePreviewActivity : ComponentActivity() {
                                             source = obj.getString("source"),
                                             deviceId = obj.getString("deviceid"),
                                             tz = obj.getString("tz"),
-                                            ts = obj.getString("ts")
+                                            ts = obj.getString("ts"),
+                                            country = if (obj.isNull("country")) null else obj.optString("country")
                                         )
                                     )
                                 }

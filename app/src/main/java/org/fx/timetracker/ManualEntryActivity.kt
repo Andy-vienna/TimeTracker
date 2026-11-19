@@ -49,10 +49,12 @@ class ManualEntryActivity : ComponentActivity() {
 
                 ManualEntryScreen(
                     onGoBack = { finish() },
-                    onSave = { kind, dateTime ->
+                    onSave = { kind, dateTime, country, customer ->
                         val intent = Intent().apply {
                             putExtra("MANUAL_EVENT_KIND", kind)
                             putExtra("MANUAL_TIMESTAMP", dateTime.toInstant().toEpochMilli())
+                            country?.let { putExtra("MANUAL_COUNTRY", it) }
+                            customer?.let { putExtra("MANUAL_CUSTOMER", it) }
                         }
                         setResult(RESULT_OK, intent)
                         finish()
@@ -65,7 +67,7 @@ class ManualEntryActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> Unit) {
+fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime, String?, String?) -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("fx", Context.MODE_PRIVATE) }
     val isUsernameSet = remember { (prefs.getString("username", "") ?: "").isNotBlank() }
@@ -73,6 +75,11 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
     var selectedDate by remember { mutableStateOf(LocalDate.now()) }
     var selectedTime by remember { mutableStateOf(LocalTime.now()) }
     var selectedEventKind by remember { mutableStateOf<String?>(null) }
+    var selectedCountry by remember { mutableStateOf(prefs.getString("travel_country", DEFAULT_REISELAND) ?: DEFAULT_REISELAND) }
+    var showCountryDialog by remember { mutableStateOf(false) }
+    val kunden = remember { KundenSpeicher.liste(prefs) }
+    var selectedCustomer by remember { mutableStateOf(KundenSpeicher.letzter(prefs)) }
+    var showKundeDialog by remember { mutableStateOf(false) }
 
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
@@ -133,6 +140,20 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
                 EventTypeButton(text = "Pause Start", kind = "BREAK_START", selectedKind = selectedEventKind, onClick = { selectedEventKind = "BREAK_START" }, modifier = Modifier.weight(1f), enabled = isUsernameSet)
                 EventTypeButton(text = "Pause Ende", kind = "BREAK_END", selectedKind = selectedEventKind, onClick = { selectedEventKind = "BREAK_END" }, modifier = Modifier.weight(1f), enabled = isUsernameSet)
             }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                EventTypeButton(text = "Reise Start", kind = EventKind.TRAVEL_START, selectedKind = selectedEventKind, onClick = { selectedEventKind = EventKind.TRAVEL_START }, modifier = Modifier.weight(1f), enabled = isUsernameSet)
+                EventTypeButton(text = "Reise Ende", kind = EventKind.TRAVEL_END, selectedKind = selectedEventKind, onClick = { selectedEventKind = EventKind.TRAVEL_END }, modifier = Modifier.weight(1f), enabled = isUsernameSet)
+            }
+            if (selectedEventKind == EventKind.IN && kunden.isNotEmpty()) {
+                OutlinedButton(onClick = { showKundeDialog = true }, modifier = Modifier.fillMaxWidth(), enabled = isUsernameSet) {
+                    Text("Kunde: ${kundeText(kunden, selectedCustomer)}")
+                }
+            }
+            if (selectedEventKind == EventKind.TRAVEL_START) {
+                OutlinedButton(onClick = { showCountryDialog = true }, modifier = Modifier.fillMaxWidth(), enabled = isUsernameSet) {
+                    Text("Land: ${reiselandText(selectedCountry)}")
+                }
+            }
 
             Spacer(modifier = Modifier.weight(1f))
 
@@ -142,7 +163,13 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
                         Toast.makeText(context, "Bitte ein Ereignis auswählen", Toast.LENGTH_SHORT).show()
                     } else {
                         val finalDateTime = ZonedDateTime.of(selectedDate, selectedTime, ZoneId.systemDefault())
-                        onSave(selectedEventKind!!, finalDateTime)
+                        val kind = selectedEventKind!!
+                        onSave(
+                            kind,
+                            finalDateTime,
+                            if (kind == EventKind.TRAVEL_START) selectedCountry else null,
+                            if (kind == EventKind.IN) selectedCustomer else null
+                        )
                     }
                 },
                 enabled = isUsernameSet,
@@ -153,6 +180,25 @@ fun ManualEntryScreen(onGoBack: () -> Unit, onSave: (String, ZonedDateTime) -> U
                 Text("Nachstempeln")
             }
         }
+    }
+
+    if (showKundeDialog) {
+        KundeDialog(
+            kunden = kunden,
+            initialId = selectedCustomer,
+            title = "Kunde",
+            onConfirm = { id -> selectedCustomer = id; showKundeDialog = false },
+            onDismiss = { showKundeDialog = false }
+        )
+    }
+
+    if (showCountryDialog) {
+        ReiselandDialog(
+            initialCode = selectedCountry,
+            title = "Reiseland",
+            onConfirm = { code -> selectedCountry = code; showCountryDialog = false },
+            onDismiss = { showCountryDialog = false }
+        )
     }
 
     if (showDatePicker) {

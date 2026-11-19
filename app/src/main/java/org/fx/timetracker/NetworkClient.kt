@@ -47,7 +47,6 @@ class NetworkClient {
         }
     }
 
-    @Suppress("unused") // This function is currently not used, but kept for future features.
     suspend fun fetch(url: String, secretKey: String): String? {
         if (url.isBlank() || secretKey.isBlank()) {
             Log.e(tag, "URL or Secret Key is blank. Aborting fetch.")
