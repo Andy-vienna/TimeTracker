@@ -15,8 +15,8 @@ android {
         minSdk = 26
         targetSdk = 36
 
-        versionCode = 8
-        versionName = "3.0.1.52"
+        versionCode = 9
+        versionName = "3.0.95"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -72,6 +72,7 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
 
     implementation(libs.okhttp)
+    implementation(libs.play.services.code.scanner)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.androidx.activity)

@@ -2,6 +2,8 @@ package org.fx.timetracker
 
 import android.app.Activity
 import android.content.Context
+import android.net.Uri
+import android.widget.Toast
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -35,7 +38,28 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.core.view.WindowCompat
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import org.fx.timetracker.ui.theme.TimeTrackerTheme
+
+/** Daten aus dem Einrichtungs-QR-Code von facturaX. */
+data class Einrichtung(val server: String, val username: String, val key: String)
+
+/**
+ * Liest den Link aus dem QR-Code in facturaX (Benutzerverwaltung → Zeiterfassungs-Benutzer):
+ * fxtime://setup?server=…&user=…&key=… – null bei allem anderen.
+ */
+fun leseEinrichtung(text: String?): Einrichtung? {
+    if (text.isNullOrBlank()) return null
+    val uri = runCatching { Uri.parse(text.trim()) }.getOrNull() ?: return null
+    if (uri.scheme != "fxtime" || uri.host != "setup") return null
+    val server = uri.getQueryParameter("server")?.trim().orEmpty()
+    val user = uri.getQueryParameter("user")?.trim().orEmpty()
+    val key = uri.getQueryParameter("key")?.trim().orEmpty()
+    if (!server.startsWith("https://") || user.isEmpty() || key.isEmpty()) return null
+    return Einrichtung(server, user, key)
+}
 
 class SettingsActivity : ComponentActivity() {
 
@@ -131,7 +155,39 @@ fun SettingsScreen(onSave: () -> Unit) {
             )
         }
 
-        item { Spacer(modifier = Modifier.height(32.dp)) }
+        item { Spacer(modifier = Modifier.height(24.dp)) }
+
+        item {
+            OutlinedButton(
+                onClick = {
+                    val optionen = GmsBarcodeScannerOptions.Builder()
+                        .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                        .build()
+                    GmsBarcodeScanning.getClient(context, optionen).startScan()
+                        .addOnSuccessListener { code ->
+                            val e = leseEinrichtung(code.rawValue)
+                            if (e == null) {
+                                Toast.makeText(context, "Kein Einrichtungs-Code von facturaX", Toast.LENGTH_LONG).show()
+                            } else {
+                                serverUrl = e.server
+                                username = e.username
+                                secretKey = e.key
+                                Toast.makeText(context, "Übernommen – bitte prüfen und speichern", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        .addOnFailureListener {
+                            Toast.makeText(context, "QR-Scanner nicht verfügbar: ${it.message}", Toast.LENGTH_LONG).show()
+                        }
+                },
+                modifier = Modifier
+                    .fillMaxWidth(0.8f)
+                    .height(50.dp)
+            ) {
+                Text("Per QR-Code einrichten")
+            }
+        }
+
+        item { Spacer(modifier = Modifier.height(16.dp)) }
 
         item {
             Button(
